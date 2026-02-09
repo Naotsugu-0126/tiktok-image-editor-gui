@@ -1,0 +1,16 @@
+{
+  "name": "sozai-remotion-caption",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "render:csv": "node scripts/render-from-csv.mjs"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.330",
+    "@remotion/google-fonts": "^4.0.419",
+    "@remotion/renderer": "4.0.330",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "remotion": "4.0.330"
+  }
+}
