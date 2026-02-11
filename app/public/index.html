@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TikTok画像編集GUI</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <h1>TikTok画像編集GUI</h1>
+        <p>Google Sheets / Google Drive をデータ管理として使うローカル操作画面</p>
+      </header>
+
+      <section class="panel">
+        <h2>スプレッドシートリンク</h2>
+        <div id="sheet-location" class="location-box muted">スプレッドシート情報を読み込み中...</div>
+        <div class="button-row">
+          <button id="open-sheet" class="secondary">スプレッドシートを開く</button>
+        </div>
+      </section>
+
+      <section class="panel hidden">
+        <h2>接続設定</h2>
+        <div class="form-row">
+          <label for="spreadsheet-id">スプレッドシートID または URL</label>
+          <input id="spreadsheet-id" placeholder="https://docs.google.com/spreadsheets/d/.../edit" />
+        </div>
+        <div class="form-row">
+          <label for="token-path">OAuthトークンパス（任意）</label>
+          <input id="token-path" placeholder="既定: ../google_ops_setup/oauth_token.json" />
+        </div>
+        <div class="button-row">
+          <button id="save-config">設定保存</button>
+          <button id="init-sheet" class="secondary">シート初期化 / 接続確認</button>
+          <button id="reload-all" class="secondary">再読込</button>
+        </div>
+      </section>
+
+      <section class="panel hidden">
+        <h2>ストーリー作成</h2>
+        <div class="grid-3">
+          <div class="form-row">
+            <label for="new-title">タイトル</label>
+            <input id="new-title" placeholder="例: 朝活ストーリー" />
+          </div>
+          <div class="form-row">
+            <label for="new-theme">テーマ</label>
+            <select id="new-theme"></select>
+          </div>
+          <div class="form-row">
+            <label for="new-image-id">素材画像ID（Drive）</label>
+            <input id="new-image-id" placeholder="Drive file ID（任意）" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label for="new-image-file">素材画像（ローカル）</label>
+          <input id="new-image-file" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" />
+        </div>
+        <div class="button-row">
+          <button id="create-story">ストーリーを作成</button>
+        </div>
+      </section>
+
+      <section class="panel hidden">
+        <h2>一括作成（50ストーリー想定）</h2>
+        <div class="grid-3">
+          <div class="form-row">
+            <label for="batch-title-prefix">タイトル接頭辞</label>
+            <input id="batch-title-prefix" placeholder="例: 量産ストーリー" />
+          </div>
+          <div class="form-row">
+            <label for="batch-theme">テーマ</label>
+            <select id="batch-theme"></select>
+          </div>
+          <div class="form-row">
+            <label for="batch-enqueue-render">書き出しキュー投入</label>
+            <select id="batch-enqueue-render">
+              <option value="yes">する</option>
+              <option value="no">しない</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid-3">
+          <div class="form-row">
+            <label for="batch-telop-type">テロップ種類</label>
+            <select id="batch-telop-type"></select>
+          </div>
+          <div class="form-row">
+            <label for="batch-text-position">テキスト位置</label>
+            <select id="batch-text-position"></select>
+          </div>
+          <div class="form-row">
+            <label for="batch-font">フォント</label>
+            <select id="batch-font"></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <label for="batch-color">文字色</label>
+          <input id="batch-color" type="color" value="#ffffff" />
+        </div>
+        <div class="form-row">
+          <label for="batch-image-files">素材画像（複数選択）</label>
+          <input id="batch-image-files" type="file" multiple accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" />
+          <div id="batch-image-count" class="field-hint">選択画像: 0 / 50</div>
+        </div>
+        <div class="form-row">
+          <label for="batch-scene-template">20シーン本文（1行=1シーン / 合計20行）</label>
+          <textarea id="batch-scene-template" rows="8" placeholder="1行目: シーン1の本文&#10;2行目: シーン2の本文&#10;..."></textarea>
+          <div id="batch-scene-count" class="field-hint">本文行数: 0 / 20</div>
+        </div>
+        <div class="button-row">
+          <button id="batch-start">一括作成を実行</button>
+        </div>
+      </section>
+
+      <section class="panel hidden">
+        <h2>シート一括キュー投入（本文ベース）</h2>
+        <div class="grid-3">
+          <div class="form-row">
+            <label for="enqueue-limit">投入上限</label>
+            <input id="enqueue-limit" type="number" min="1" max="50" value="50" />
+          </div>
+        </div>
+        <div class="button-row">
+          <button id="enqueue-from-sheet">シートのテキスト済みストーリーを一括キュー投入</button>
+        </div>
+      </section>
+
+      <section class="panel hidden">
+        <h2>ID指定キュー投入</h2>
+        <div class="grid-3">
+          <div class="form-row">
+            <label for="batch-range-prefix">ID接頭辞</label>
+            <input id="batch-range-prefix" value="TTK_20260210_" />
+          </div>
+          <div class="form-row">
+            <label for="batch-range-start">開始番号</label>
+            <input id="batch-range-start" type="number" min="1" placeholder="101" />
+          </div>
+          <div class="form-row">
+            <label for="batch-range-end">終了番号</label>
+            <input id="batch-range-end" type="number" min="1" placeholder="101" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label for="batch-story-ids">ストーリーID（改行またはカンマ区切り）</label>
+          <textarea id="batch-story-ids" rows="3" placeholder="TTK_20260210_101&#10;TTK_20260210_102"></textarea>
+        </div>
+        <div class="button-row">
+          <button id="enqueue-by-ids">ID指定でキュー投入</button>
+        </div>
+      </section>
+
+      <section class="panel hidden">
+        <h2>ストーリー一覧</h2>
+        <div id="stories-empty" class="muted">データを読み込んでください。</div>
+        <table id="stories-table" class="table hidden">
+          <thead>
+            <tr>
+              <th>ストーリーID</th>
+              <th>タイトル</th>
+              <th>テーマ</th>
+              <th>状態</th>
+              <th>素材画像ID</th>
+              <th>作成日時</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="stories-body"></tbody>
+        </table>
+      </section>
+
+      <section class="panel hidden">
+        <h2>シーン編集（20枚）</h2>
+        <div id="current-story" class="muted">ストーリーを選択してください。</div>
+        <div class="image-source-box">
+          <div class="form-row">
+            <label for="current-image-ref">素材画像参照（Drive ID または local:...）</label>
+            <input id="current-image-ref" placeholder="例: 1abcd... または local:sample_1234.png" />
+          </div>
+          <div class="form-row">
+            <label for="current-image-file">素材画像をローカルから変更</label>
+            <input id="current-image-file" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" />
+          </div>
+          <div class="button-row">
+            <button id="save-story-image" class="secondary" disabled>素材画像を保存</button>
+          </div>
+        </div>
+        <div class="scene-style-box">
+          <div class="scene-style-head">一括スタイル</div>
+          <div class="grid-3">
+            <div class="form-row">
+              <label for="style-theme">テーマ</label>
+              <select id="style-theme"></select>
+            </div>
+            <div class="form-row">
+              <label for="style-telop-type">テロップ種類</label>
+              <select id="style-telop-type"></select>
+            </div>
+            <div class="form-row">
+              <label for="style-text-position">テキスト位置</label>
+              <select id="style-text-position"></select>
+            </div>
+          </div>
+          <div class="grid-3">
+            <div class="form-row">
+              <label for="style-font">フォント</label>
+              <select id="style-font"></select>
+            </div>
+            <div class="form-row">
+              <label for="style-color">文字色</label>
+              <input id="style-color" type="color" value="#ffffff" />
+            </div>
+          </div>
+          <div class="button-row">
+            <button id="apply-style-all" class="secondary" disabled>全シーンに適用</button>
+          </div>
+        </div>
+        <div class="button-row">
+          <button id="save-scenes" disabled>シーン保存</button>
+          <button id="render-story" disabled>書き出し開始</button>
+        </div>
+        <div class="preview-wrap">
+          <div class="preview-head">
+            <strong>プレビュー</strong>
+            <span id="preview-meta" class="muted">シーンを選んで「プレビュー」を押してください。</span>
+          </div>
+          <img id="preview-image" class="preview-image hidden" alt="シーンプレビュー" />
+        </div>
+        <div id="scene-grid" class="scene-grid"></div>
+      </section>
+
+      <section class="panel">
+        <h2>ジョブ進捗</h2>
+        <div id="jobs-empty" class="muted">ジョブはまだありません。</div>
+        <div id="jobs-list"></div>
+      </section>
+
+      <section id="message" class="message hidden"></section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -3,10 +3,12 @@ node_modules/
 
 # Build / render outputs
 output/
+app-data/
 
 # Environment / secrets
 .env
 .env.*
+!.env.example
 
 # Editor / OS files
 .serena/
