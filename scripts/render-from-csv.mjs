@@ -5,7 +5,10 @@ import {renderStill, selectComposition} from '@remotion/renderer';
 
 const projectRoot = process.cwd();
 const csvPath = path.resolve(projectRoot, 'templates/captions.csv');
-const outputDir = path.resolve(projectRoot, 'output');
+const outputDirInput = String(process.env.APP_OUTPUT_DIR ?? 'output').trim() || 'output';
+const outputDir = path.isAbsolute(outputDirInput)
+  ? path.resolve(outputDirInput)
+  : path.resolve(projectRoot, outputDirInput);
 const sozaiDir = path.resolve(projectRoot, 'sozai');
 const entryPoint = path.resolve(projectRoot, 'src/index.ts');
 

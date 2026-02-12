@@ -22,7 +22,8 @@ const LOCAL_META_PATH = path.resolve(APP_DATA_DIR, 'local-story-meta.json');
 const DEFAULT_TOKEN_PATH = path.resolve(PROJECT_ROOT, '..', 'google_ops_setup', 'oauth_token.json');
 const CSV_PATH = path.resolve(PROJECT_ROOT, 'templates', 'captions.csv');
 const SOZAI_DIR = path.resolve(PROJECT_ROOT, 'sozai');
-const OUTPUT_DIR = path.resolve(PROJECT_ROOT, 'output');
+const DEFAULT_OUTPUT_DIR_NAME = 'output';
+const DEFAULT_OUTPUT_DIR = path.resolve(PROJECT_ROOT, DEFAULT_OUTPUT_DIR_NAME);
 const ENTRY_POINT = path.resolve(PROJECT_ROOT, 'src', 'index.ts');
 const PORT = Number.parseInt(process.env.APP_PORT ?? '4173', 10);
 const NPM_COMMAND = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -291,6 +292,7 @@ const readLocalConfig = () => {
     spreadsheetId: String(stored.spreadsheetId ?? '').trim(),
     tokenPath: String(stored.tokenPath ?? '').trim(),
     outputDriveFolderId: String(stored.outputDriveFolderId ?? '').trim(),
+    outputLocalDir: String(stored.outputLocalDir ?? '').trim(),
     renderStyle: normalizeRenderStyle(stored.renderStyle),
   };
 };
@@ -320,15 +322,29 @@ const ensureStoryMeta = (meta, storyId) => {
   return storyMeta;
 };
 
+const resolveOutputDir = (configInput = null) => {
+  const config = configInput || getRuntimeConfig();
+  const raw = String(config?.outputLocalDir ?? '').trim();
+  const target = raw || DEFAULT_OUTPUT_DIR_NAME;
+  if (path.isAbsolute(target)) {
+    return path.resolve(target);
+  }
+  return path.resolve(PROJECT_ROOT, target);
+};
+
 const getRuntimeConfig = () => {
   const local = readLocalConfig();
   const envSpreadsheetId = String(process.env.GOOGLE_SHEET_ID ?? '').trim();
   const envTokenPath = String(process.env.GOOGLE_TOKEN_PATH ?? '').trim();
   const envOutputDriveFolderId = String(process.env.GOOGLE_DRIVE_OUTPUT_FOLDER_ID ?? '').trim();
+  const envOutputLocalDir = String(process.env.APP_OUTPUT_DIR ?? '').trim();
+  const outputLocalDir = envOutputLocalDir || local.outputLocalDir || DEFAULT_OUTPUT_DIR_NAME;
   return {
     spreadsheetId: envSpreadsheetId || local.spreadsheetId,
     tokenPath: envTokenPath || local.tokenPath || DEFAULT_TOKEN_PATH,
     outputDriveFolderId: envOutputDriveFolderId || local.outputDriveFolderId,
+    outputLocalDir,
+    outputResolvedDir: resolveOutputDir({outputLocalDir}),
     renderStyle: normalizeRenderStyle(local.renderStyle),
   };
 };
@@ -343,6 +359,49 @@ const writeLocalConfig = (patch) => {
   next.renderStyle = normalizeRenderStyle(next.renderStyle);
   fs.writeFileSync(LOCAL_CONFIG_PATH, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
   return next;
+};
+
+const listWindowsRootDirs = () => {
+  const roots = [];
+  for (let i = 65; i <= 90; i += 1) {
+    const letter = String.fromCharCode(i);
+    const drive = `${letter}:\\`;
+    try {
+      if (fs.existsSync(drive) && fs.statSync(drive).isDirectory()) {
+        roots.push(drive);
+      }
+    } catch {
+      // ignore inaccessible drive
+    }
+  }
+  return roots;
+};
+
+const resolveBrowsePath = (value) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return resolveOutputDir();
+  if (path.isAbsolute(raw)) return path.resolve(raw);
+  return path.resolve(PROJECT_ROOT, raw);
+};
+
+const resolveExistingDirectory = (inputPath) => {
+  let current = path.resolve(inputPath);
+  const root = path.parse(current).root;
+  while (true) {
+    try {
+      if (fs.existsSync(current) && fs.statSync(current).isDirectory()) {
+        return current;
+      }
+    } catch {
+      // continue
+    }
+    const parent = path.dirname(current);
+    if (!parent || parent === current || current === root) {
+      break;
+    }
+    current = parent;
+  }
+  return resolveOutputDir();
 };
 
 const nowIso = () => new Date().toISOString();
@@ -1221,6 +1280,8 @@ const buildSheetGuidePayload = (config = getRuntimeConfig()) => {
       spreadsheetUrl: buildSpreadsheetUrl(config.spreadsheetId),
       localConfigPath: LOCAL_CONFIG_PATH,
       localImageDir: LOCAL_IMAGE_DIR,
+      outputLocalDir: config.outputLocalDir || DEFAULT_OUTPUT_DIR_NAME,
+      outputResolvedDir: resolveOutputDir(config),
     },
   };
 };
@@ -1432,7 +1493,8 @@ const getStoryImageDataUrl = async (drive, story, {preview = false} = {}) => {
 };
 
 const renderPreviewStill = async ({story, scene, drive}) => {
-  await fsp.mkdir(OUTPUT_DIR, {recursive: true});
+  const outputDir = resolveOutputDir();
+  await fsp.mkdir(outputDir, {recursive: true});
   const image = await getStoryImageDataUrl(drive, story, {preview: true});
   const cacheSeed = {
     v: PREVIEW_CACHE_VERSION,
@@ -1453,7 +1515,7 @@ const renderPreviewStill = async ({story, scene, drive}) => {
   };
   const hash = createHash('sha1').update(JSON.stringify(cacheSeed)).digest('hex').slice(0, 18);
   const filename = `preview_${hash}.jpg`;
-  const outputPath = path.resolve(OUTPUT_DIR, filename);
+  const outputPath = path.resolve(outputDir, filename);
   const url = `/output/${filename}`;
 
   if (fs.existsSync(outputPath)) {
@@ -1500,11 +1562,14 @@ const renderPreviewStill = async ({story, scene, drive}) => {
   });
 };
 
-const runCommandWithLogs = async (command, args, cwd, onLog) =>
+const runCommandWithLogs = async (command, args, cwd, onLog, envPatch = {}) =>
   new Promise((resolve, reject) => {
     const child = spawn([command, ...args].join(' '), {
       cwd,
-      env: process.env,
+      env: {
+        ...process.env,
+        ...envPatch,
+      },
       shell: true,
       windowsHide: true,
     });
@@ -1530,6 +1595,64 @@ const runCommandWithLogs = async (command, args, cwd, onLog) =>
     });
   });
 
+const showOutputFolderPicker = async (initialDir = '') =>
+  new Promise((resolve, reject) => {
+    if (process.platform !== 'win32') {
+      reject(new Error('フォルダ参照はWindowsのみ対応です。'));
+      return;
+    }
+
+    const safeInitial = String(initialDir ?? '').trim().replaceAll("'", "''");
+    const psScript = [
+      "$enc = [System.Text.UTF8Encoding]::new($false)",
+      '[Console]::OutputEncoding = $enc',
+      '$OutputEncoding = $enc',
+      'Add-Type -AssemblyName System.Windows.Forms',
+      '$d = New-Object System.Windows.Forms.OpenFileDialog',
+      "$d.Title = '出力先フォルダを選択'",
+      "$d.Filter = 'すべてのファイル (*.*)|*.*'",
+      '$d.CheckFileExists = $false',
+      '$d.CheckPathExists = $true',
+      '$d.ValidateNames = $false',
+      '$d.RestoreDirectory = $true',
+      '$d.AutoUpgradeEnabled = $true',
+      '$d.Multiselect = $false',
+      '$d.FileName = "このフォルダを選択"',
+      ...(safeInitial ? [`$d.InitialDirectory = '${safeInitial}'`] : []),
+      '$r = $d.ShowDialog()',
+      'if ($r -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::WriteLine((Split-Path $d.FileName -Parent)) }',
+    ].join('; ');
+    const encodedCommand = Buffer.from(psScript, 'utf16le').toString('base64');
+
+    const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', encodedCommand], {
+      cwd: PROJECT_ROOT,
+      shell: false,
+      windowsHide: true,
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString('utf8');
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.on('error', (error) => reject(error));
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `Folder picker failed (exit=${code})`));
+        return;
+      }
+      const selected = stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .at(-1);
+      resolve(String(selected || '').trim());
+    });
+  });
+
 const createJobId = () => `JOB_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
 const createJobRecordInSheet = async (sheets, spreadsheetId, storyId, status) => {
@@ -1550,7 +1673,13 @@ const writeJobRow = async (sheets, spreadsheetId, rowNumber, values) => {
   void _ignore;
 };
 
-const enqueueStoryRenderJob = async ({sheets, spreadsheetId, storyId, validateStory = true}) => {
+const enqueueStoryRenderJob = async ({
+  sheets,
+  spreadsheetId,
+  storyId,
+  validateStory = true,
+  outputDir = resolveOutputDir(),
+}) => {
   if (validateStory) {
     await getStoryDetail(sheets, spreadsheetId, storyId);
   }
@@ -1563,7 +1692,7 @@ const enqueueStoryRenderJob = async ({sheets, spreadsheetId, storyId, validateSt
     createdAt: nowIso(),
     startedAt: '',
     finishedAt: '',
-    outputDir: 'output',
+    outputDir,
     outputFileId: '',
     error: '',
     logs: [''],
@@ -1859,10 +1988,11 @@ const runRenderJob = async (jobId) => {
       pushJobLog(jobId, `Drive?????: ${path.basename(downloaded.imagePath)}`);
     }
 
-    await fsp.mkdir(OUTPUT_DIR, {recursive: true});
+    const outputDir = resolveOutputDir(config);
+    await fsp.mkdir(outputDir, {recursive: true});
     await runCommandWithLogs(NPM_COMMAND, ['run', 'render:csv'], PROJECT_ROOT, (line) => {
       pushJobLog(jobId, line);
-    });
+    }, {APP_OUTPUT_DIR: outputDir});
 
     const renderedSceneNos = new Set(
       scenes
@@ -1924,8 +2054,45 @@ const runRenderJob = async (jobId) => {
 
 const app = express();
 app.use(express.json({limit: '25mb'}));
-app.use(express.static(PUBLIC_DIR));
-app.use('/output', express.static(OUTPUT_DIR));
+app.use(
+  express.static(PUBLIC_DIR, {
+    etag: false,
+    lastModified: false,
+    maxAge: 0,
+    setHeaders: (res) => {
+      res.setHeader('Cache-Control', 'no-store');
+    },
+  })
+);
+app.get(
+  '/output/:fileName',
+  asyncHandler(async (req, res) => {
+    const fileName = String(req.params.fileName ?? '').trim();
+    if (!fileName || fileName.includes('/') || fileName.includes('\\')) {
+      res.status(400).json({error: 'Invalid filename.'});
+      return;
+    }
+
+    const outputDir = resolveOutputDir();
+    const targetPath = path.resolve(outputDir, fileName);
+    const rel = path.relative(outputDir, targetPath);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      res.status(400).json({error: 'Invalid filename.'});
+      return;
+    }
+
+    if (!fs.existsSync(targetPath)) {
+      const fallbackPath = path.resolve(DEFAULT_OUTPUT_DIR, fileName);
+      if (!fs.existsSync(fallbackPath)) {
+        res.status(404).json({error: 'File not found.'});
+        return;
+      }
+      res.sendFile(fallbackPath);
+      return;
+    }
+    res.sendFile(targetPath);
+  })
+);
 
 app.get('/api/health', (_req, res) => {
   res.json({ok: true, now: nowIso()});
@@ -2095,6 +2262,9 @@ app.put(
     if (Object.prototype.hasOwnProperty.call(body, 'outputDriveFolderId')) {
       patch.outputDriveFolderId = String(body.outputDriveFolderId ?? '').trim();
     }
+    if (Object.prototype.hasOwnProperty.call(body, 'outputLocalDir') || Object.prototype.hasOwnProperty.call(body, 'outputDir')) {
+      patch.outputLocalDir = String(body.outputLocalDir ?? body.outputDir ?? '').trim() || DEFAULT_OUTPUT_DIR_NAME;
+    }
 
     const hasRenderStylePayload =
       Object.prototype.hasOwnProperty.call(body, 'renderStyle') ||
@@ -2129,8 +2299,68 @@ app.put(
         spreadsheetId: stored.spreadsheetId || '',
         tokenPath: stored.tokenPath || '',
         outputDriveFolderId: stored.outputDriveFolderId || '',
+        outputLocalDir: stored.outputLocalDir || DEFAULT_OUTPUT_DIR_NAME,
+        outputResolvedDir: resolveOutputDir(stored),
         renderStyle: normalizeRenderStyle(stored.renderStyle),
       },
+    });
+  })
+);
+
+app.post(
+  '/api/dialog/select-output-dir',
+  asyncHandler(async (req, res) => {
+    const currentDirRaw = String(req.body?.currentDir ?? '').trim();
+    const resolvedCurrent = currentDirRaw
+      ? path.isAbsolute(currentDirRaw)
+        ? path.resolve(currentDirRaw)
+        : path.resolve(PROJECT_ROOT, currentDirRaw)
+      : '';
+    const initialDir = resolvedCurrent && fs.existsSync(resolvedCurrent) ? resolvedCurrent : '';
+
+    const selectedPath = await showOutputFolderPicker(initialDir);
+    if (!selectedPath) {
+      res.json({ok: true, canceled: true});
+      return;
+    }
+
+    const resolved = path.resolve(selectedPath);
+    const relative = path.relative(PROJECT_ROOT, resolved);
+    const canUseRelative = Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
+    const outputLocalDir = canUseRelative ? relative : resolved;
+
+    res.json({
+      ok: true,
+      canceled: false,
+      selectedPath: resolved,
+      outputLocalDir,
+    });
+  })
+);
+
+app.post(
+  '/api/fs/list-dirs',
+  asyncHandler(async (req, res) => {
+    const requested = String(req.body?.path ?? '').trim();
+    const target = resolveExistingDirectory(resolveBrowsePath(requested));
+    const entries = fs
+      .readdirSync(target, {withFileTypes: true})
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({
+        name: entry.name,
+        path: path.resolve(target, entry.name),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+
+    const parent = path.dirname(target);
+    const parentPath = parent && parent !== target ? parent : '';
+
+    res.json({
+      ok: true,
+      currentPath: target,
+      parentPath,
+      roots: process.platform === 'win32' ? listWindowsRootDirs() : [path.parse(target).root],
+      entries,
     });
   })
 );
@@ -2564,7 +2794,7 @@ app.post(
       sheets,
       spreadsheetId: config.spreadsheetId,
       limit: Number.POSITIVE_INFINITY,
-      skipCompleted: true,
+      skipCompleted: false,
       startStoryId,
       endStoryId,
     });

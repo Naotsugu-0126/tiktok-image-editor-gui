@@ -263,6 +263,99 @@ button:disabled {
   margin-bottom: 8px;
 }
 
+.output-box {
+  margin-top: 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: #fbfdff;
+}
+
+.output-head {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.input-with-button {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.input-with-button input {
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-picker {
+  position: fixed;
+  inset: 0;
+  background: rgba(18, 31, 48, 0.35);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.folder-picker-card {
+  width: min(900px, 96vw);
+  max-height: 85vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 12px;
+}
+
+.folder-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.folder-path {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fbfdff;
+  margin-bottom: 8px;
+  word-break: break-all;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.folder-roots {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.folder-list {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfdff;
+  min-height: 220px;
+  max-height: 45vh;
+  overflow: auto;
+  padding: 8px;
+  margin-bottom: 10px;
+}
+
+.folder-item {
+  width: 100%;
+  text-align: left;
+  background: #fff;
+  color: var(--text);
+  border: 1px solid var(--line);
+  margin-bottom: 6px;
+}
+
 .range-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

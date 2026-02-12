@@ -35,6 +35,10 @@ const ui = {
   reload: null,
   rangeStartId: null,
   rangeEndId: null,
+  outputDir: null,
+  browseOutputDir: null,
+  saveOutputDir: null,
+  outputResolved: null,
   styleTheme: null,
   styleTelopType: null,
   styleTextPosition: null,
@@ -455,9 +459,13 @@ const renderSheetLocation = () => {
     return;
   }
   const url = `https://docs.google.com/spreadsheets/d/${id}/edit`;
+  const outputLocalDir = String(state.config?.outputLocalDir || 'output').trim() || 'output';
+  const outputResolvedDir = String(state.config?.outputResolvedDir || '').trim();
   if (els.spreadsheetIdInput) els.spreadsheetIdInput.value = id;
   els.sheetLocation.innerHTML =
-    `<div>シートID: <code>${id}</code></div><div>シートURL: <a href="${url}" target="_blank" rel="noopener">${url}</a></div>`;
+    `<div>シートID: <code>${id}</code></div>` +
+    `<div>シートURL: <a href="${url}" target="_blank" rel="noopener">${url}</a></div>` +
+    `<div>ローカル出力先: <code>${outputLocalDir}</code>${outputResolvedDir ? ` (${outputResolvedDir})` : ''}</div>`;
 };
 
 const renderSimpleStatus = () => {
@@ -496,6 +504,48 @@ const saveStyle = async () => {
     showMessage(error.message, 'error');
   } finally {
     setBusy(ui.saveStyle, false);
+  }
+};
+
+const saveOutputDir = async () => {
+  const outputLocalDir = String(ui.outputDir?.value || '').trim() || 'output';
+  setBusy(ui.saveOutputDir, true);
+  try {
+    const res = await api('/api/config', {method: 'PUT', body: JSON.stringify({outputLocalDir})});
+    state.config = {...(state.config || {}), ...(res.config || {})};
+    renderSheetLocation();
+    renderOutputDirControls();
+    showMessage('ローカル保存先を保存しました。', 'success');
+  } catch (error) {
+    showMessage(error.message, 'error');
+  } finally {
+    setBusy(ui.saveOutputDir, false);
+  }
+};
+
+const browseOutputDir = async () => {
+  setBusy(ui.browseOutputDir, true);
+  try {
+    showMessage('エクスプローラーでフォルダ選択を開いています。', 'info');
+    const currentDir = String(ui.outputDir?.value || state.config?.outputLocalDir || 'output').trim();
+    const res = await api('/api/dialog/select-output-dir', {
+      method: 'POST',
+      body: JSON.stringify({currentDir}),
+    });
+    if (res.canceled) {
+      showMessage('フォルダ選択をキャンセルしました。', 'info');
+      return;
+    }
+    const selected = String(res.outputLocalDir || '').trim();
+    if (!selected) {
+      throw new Error('フォルダを取得できませんでした。');
+    }
+    if (ui.outputDir) ui.outputDir.value = selected;
+    await saveOutputDir();
+  } catch (error) {
+    showMessage(error.message, 'error');
+  } finally {
+    setBusy(ui.browseOutputDir, false);
   }
 };
 
@@ -544,6 +594,12 @@ const mountSimplePanel = () => {
     '      <div class="button-row"><button id="simple-start-range" class="secondary">範囲指定で処理開始</button></div>' +
     '      <div class="field-hint">開始IDまたは終了IDだけでも指定可能です（片方未入力なら先頭/末尾まで）。</div>' +
     '    </div>' +
+    '    <div class="output-box">' +
+    '      <div class="output-head">ローカル保存先</div>' +
+    '      <div class="form-row"><label>出力フォルダ（相対 or 絶対パス）</label><div class="input-with-button"><input id="simple-output-dir" placeholder="output または C:\\\\TikTok\\\\output" /><button id="simple-browse-output-dir" type="button" class="secondary">参照</button></div></div>' +
+    '      <div class="button-row"><button id="simple-save-output-dir" class="secondary">保存先を保存</button></div>' +
+    '      <div id="simple-output-resolved" class="field-hint"></div>' +
+    '    </div>' +
     '    <div class="scene-style-box">' +
       '      <div class="scene-style-head">共通スタイル(全件適用)</div>' +
     '      <div class="grid-3">' +
@@ -587,6 +643,10 @@ const mountSimplePanel = () => {
   ui.reload = panel.querySelector('#simple-reload');
   ui.rangeStartId = panel.querySelector('#simple-range-start-id');
   ui.rangeEndId = panel.querySelector('#simple-range-end-id');
+  ui.outputDir = panel.querySelector('#simple-output-dir');
+  ui.browseOutputDir = panel.querySelector('#simple-browse-output-dir');
+  ui.saveOutputDir = panel.querySelector('#simple-save-output-dir');
+  ui.outputResolved = panel.querySelector('#simple-output-resolved');
   ui.styleTheme = panel.querySelector('#simple-style-theme');
   ui.styleTelopType = panel.querySelector('#simple-style-telop-type');
   ui.styleTextPosition = panel.querySelector('#simple-style-text-position');
@@ -612,6 +672,8 @@ const mountSimplePanel = () => {
   });
 
   ui.saveStyle?.addEventListener('click', () => saveStyle());
+  ui.browseOutputDir?.addEventListener('click', () => browseOutputDir());
+  ui.saveOutputDir?.addEventListener('click', () => saveOutputDir());
   ui.refreshPreview?.addEventListener('click', () => refreshPreviewImage());
   ui.reload?.addEventListener('click', () => bootstrap());
   ui.openSheet?.addEventListener('click', () => openSpreadsheet());
@@ -643,7 +705,12 @@ const mountSimplePanel = () => {
       });
       const startLabel = r.rangeStartId || startStoryId || '先頭';
       const endLabel = r.rangeEndId || endStoryId || '末尾';
-      showMessage(`範囲キュー投入: ${r.queuedCount || 0}件 (${startLabel} 〜 ${endLabel})`, 'success');
+      if (Number(r.queuedCount || 0) > 0) {
+        showMessage(`範囲キュー投入: ${r.queuedCount || 0}件 (${startLabel} 〜 ${endLabel})`, 'success');
+      } else {
+        const skippedHint = Array.isArray(r.skipped) && r.skipped.length > 0 ? ` / スキップ理由: ${String(r.skipped[0].reason || '-')}` : '';
+        showMessage(`範囲対象 ${r.considered || 0}件、投入0件でした (${startLabel} 〜 ${endLabel})${skippedHint}`, 'info');
+      }
       await bootstrap();
     } catch (error) {
       showMessage(error.message, 'error');
@@ -687,6 +754,15 @@ const renderStyleControls = () => {
   if (ui.styleStrokeColor) ui.styleStrokeColor.value = normalizeColorHex(style.strokeColor, '#121212');
 };
 
+const renderOutputDirControls = () => {
+  const outputLocalDir = String(state.config?.outputLocalDir || 'output').trim() || 'output';
+  const outputResolvedDir = String(state.config?.outputResolvedDir || '').trim();
+  if (ui.outputDir) ui.outputDir.value = outputLocalDir;
+  if (ui.outputResolved) {
+    ui.outputResolved.textContent = outputResolvedDir ? `現在の保存先: ${outputResolvedDir}` : '';
+  }
+};
+
 const hideAdvancedPanels = () => {
   const panels = Array.from(document.querySelectorAll('.panel'));
   panels.forEach((panel) => {
@@ -714,6 +790,7 @@ const bootstrap = async () => {
     };
 
     renderSheetLocation();
+    renderOutputDirControls();
     renderStyleControls();
     renderJobs();
     renderSimpleStatus();
